@@ -1,0 +1,158 @@
+#Contributers: D.K. ,J.L.
+
+import math
+
+class MHelper:
+
+    @staticmethod
+    def entropy(data, output_attr_idx):
+        val_freq     = {}
+        data_entropy = 0.0
+
+        # Calculate the frequency of each of the values in the target attr
+        for record in data:
+            if record[output_attr_idx] in val_freq.keys():
+                val_freq[record[output_attr_idx]] += 1.0
+            else:
+                val_freq[record[output_attr_idx]]  = 1.0
+
+        # Calculate the entropy of the data for the target attribute
+        # Entropy: -p log p
+        for freq in val_freq.values():
+            data_entropy += (-freq/len(data)) * math.log(freq/len(data), 2)
+
+        return data_entropy
+
+    @staticmethod
+    def get_min_max_of_numeric_attribute( instances, attr_idx ):
+        min = float(instances[0][attr_idx])
+        max = float(instances[0][attr_idx])
+
+        for instance in instances:
+            if float(instance[ attr_idx ]) < min: min = float(instance[ attr_idx ])
+            if float(instance[ attr_idx ]) > max: max = float(instance[ attr_idx ])
+
+        return float(min), float(max)
+
+    @staticmethod
+    def information_gain(data, m_attr, output_attr_idx):
+        subset_entropy = 0.0
+
+        # Calculate the sum of the entropy for each subset of records weighted
+        # by their probability of occuring in the training set.
+        # IG(S,a)=entropy(S)−[p(s1)×entropy(s1)+p(s2)×entropy(s2)...+p(sn)×entropy(sn)]
+
+        if m_attr.attr_type == 2: #nominal
+            val_freq       = {}
+
+            # Calculate the frequency of each of the values in the target attribute
+            for record in data:
+                if record[m_attr.attr_idx] in val_freq.keys():
+                    val_freq[record[m_attr.attr_idx]] += 1.0
+                else:
+                    val_freq[record[m_attr.attr_idx]]  = 1.0
+
+            for val in val_freq.keys():
+                val_prob        = val_freq[val] / sum(val_freq.values())
+                data_subset     = [record for record in data if record[m_attr.attr_idx] == val]
+                subset_entropy += val_prob * MHelper.entropy(data_subset, output_attr_idx)
+
+        elif m_attr.attr_type == 1: #numeric
+            val_freq       = {}
+
+            attr_min, attr_max =  m_attr.attr_range[0], m_attr.attr_range[1] #MHelper.get_min_max_of_numeric_attribute( data, m_attr.attr_idx )
+            attr_boundary = 1 if attr_max == attr_min else (attr_max - attr_min) / m_attr.attr_range[2]
+
+            # IS THIS RIGHT?
+            for record in data:
+                val = float( record[m_attr.attr_idx] )
+                val_boundary_idx = math.floor( (val - attr_min) / attr_boundary ) # prevent divide by 0
+                if val_boundary_idx in val_freq.keys():
+                    val_freq[val_boundary_idx] += 1.0
+                else:
+                    val_freq[val_boundary_idx]  = 1.0
+
+            for val in val_freq.keys():
+                val_prob        = val_freq[val] / sum(val_freq.values())
+                data_subset     = [record for record in data if
+                                   math.floor( (float( record[m_attr.attr_idx] ) - attr_min) / attr_boundary ) == val]
+                subset_entropy += val_prob * MHelper.entropy(data_subset, output_attr_idx)
+
+        # Subtract the entropy of the chosen attribute from the entropy of the
+        # whole data set with respect to the target attribute (and return it)
+        return MHelper.entropy(data, output_attr_idx) - subset_entropy
+
+    # //////////////////////////[ DECISION TREE REL - HELPER ]///////////////////////////
+
+    @staticmethod
+    def split_instances( data, m_attr ):
+        # Return a dic of attr_val : instances with that attr_val (for each attr_val that exists for attr_idx)
+        # Note: defaultdict(list) creates a dictionary that auto creates a list if new key added
+        import collections
+        partitions = collections.defaultdict(list)
+        ordered_partitions = {}
+        default_value = MHelper.majority_value_of_attribute(data, m_attr.attr_idx)
+
+        if m_attr.attr_type == 2: #nominal
+            for instance in data:
+                val_str = instance[m_attr.attr_idx]
+                if val_str is '?':
+                    partitions[ default_value ].append(instance)
+                else:
+                    partitions[ instance[m_attr.attr_idx] ].append(instance)
+
+            ordered_partitions = collections.OrderedDict( partitions )
+
+        elif m_attr.attr_type == 1: #numeric
+            attr_min, attr_max = m_attr.attr_range[0], m_attr.attr_range[1] #MHelper.get_min_max_of_numeric_attribute( data, m_attr.attr_idx )
+            attr_boundary =  1 if attr_max == attr_min else (attr_max - attr_min) / m_attr.attr_range[2]
+
+            for instance in data:
+                val_str = instance[m_attr.attr_idx]
+                if val_str is '?':
+                    val = float(default_value)
+                else:
+                    try:
+                        val = float( instance[m_attr.attr_idx] )
+                    except ValueError:
+                        a = 3
+
+                val_boundary_idx = math.floor( (val - attr_min) / attr_boundary )
+                partitions[ ">= {}".format( attr_min + attr_boundary * val_boundary_idx ) ].append(instance)
+
+            # make the dictionary remember order
+            ordered_partitions = collections.OrderedDict(
+                sorted(partitions.items(), key=lambda t: float(t[0][3:])) )
+
+        return ordered_partitions
+
+    @staticmethod
+    def choose_best_attribute( data, candidate_attributes, output_attr_idx ):
+        information_gain_attr_gain = []
+        for idx, m_attr in enumerate( candidate_attributes ):
+            information_gain_attr_gain.append( [
+                    m_attr,
+                    MHelper.information_gain( data, m_attr, output_attr_idx )
+                ] )
+
+        import operator
+        sorted_information_gain_attr_gain = sorted(
+            information_gain_attr_gain,
+            key = operator.itemgetter( 1 ),
+            reverse=True)
+
+        return sorted_information_gain_attr_gain[0][0]
+
+    @staticmethod
+    def majority_value_of_attribute( data, attribute_idx ):
+        from collections import Counter
+        try:
+            class_counts = Counter([instance[attribute_idx] for instance in data
+                                if instance[attribute_idx] is not '?'])
+        except:
+            a = 3
+        try:
+            most_common = class_counts.most_common(1)[0][0]
+        except:
+            a = 3
+        return class_counts.most_common(1)[0][0]
