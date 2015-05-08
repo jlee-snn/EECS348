@@ -1,0 +1,148 @@
+# Contributes : Daegon Kim, Joseph Lee
+#imports class: MHelper from file: helper.py
+from helper import MHelper
+
+import math
+import collections
+
+class MDecisionTree:
+
+    _tree = {}
+
+    # //////////////////////////[ DECISION TREE REL - CREATE ]///////////////////////////
+    @staticmethod
+    def create_decision_tree(data, vec_Attributes, class_attr_idx):
+
+        data    = data[:] # [:] means shallow copy
+        vals    = [record[class_attr_idx] for record in data]
+        default = MHelper.majority_value_of_attribute(data, class_attr_idx)
+
+        # If dataset / attributes empty) return the default value (OUTPUT attribute).
+        # When checking emptiness, need to subtract 1 since output attr comes at end.
+        if not data or (len(vec_Attributes) - 1) <= 0:
+            return default
+        # If all the records in the dataset have the same classification (output attr value),
+        # return that classification (output attr value).
+        elif vals.count(vals[0]) == len(vals):
+            return vals[0]
+        else:
+            bestAttribute = MHelper.choose_best_attribute(data, vec_Attributes, class_attr_idx)
+
+            tree = collections.OrderedDict({bestAttribute.attr_name:{}})
+
+            remaining_vec_attributes = [attr for attr in vec_Attributes if attr.attr_name != bestAttribute.attr_name]
+            partitions_on_attr = MHelper.split_instances( data, bestAttribute )
+
+            for attr_val in partitions_on_attr:
+                subtree = MDecisionTree.create_decision_tree(
+                    partitions_on_attr[ attr_val ],
+                    remaining_vec_attributes,
+                    class_attr_idx)
+
+                # Add the new subtree
+                tree[bestAttribute.attr_name][attr_val] = subtree
+
+        return tree
+
+    # //////////////////////////[ DECISION TREE REL - CLASSIFY EVAL SET ]///////////////////////////
+    @staticmethod
+    def classify(tree_trained, instance, vec_Attributes, default_class=None):
+
+        # [RECURSION BASE CASES]
+        if not tree_trained:
+            return default_class
+
+        # If tree_trained is not a dict, means that it has reached the bottom of the tree
+        if not isinstance(tree_trained, dict):
+            return tree_trained
+
+        # [GO DOWN THE DECISION TREE]
+        # each step of the decision tree only has 1 attribute assigned (hence idx: 0)
+        # 1 attribute can have many values => go down the route of the value that's in the instance
+
+        attribute_name = list(tree_trained.keys())[0] # key: cur_attribute
+        attribute_values = list(tree_trained.values())[0] # values: subtrees on cur_attribute
+
+        m_attr = next(attr for attr in vec_Attributes if attr.attr_name == attribute_name)
+        instance_attribute_value = instance[m_attr.attr_idx]
+
+        if instance_attribute_value is '?':
+            return default_class
+
+        if m_attr.attr_type == 1: #numeric
+            prevMin = None
+            for i, key in enumerate(attribute_values.keys()):
+                curKey = float(key[3:])
+                if curKey <= float(instance_attribute_value):
+                    if prevMin is None or prevMin <= curKey:
+                        prevMin = curKey
+
+            if prevMin is None:
+                prevMin = min( [ float(key[3:]) for key in attribute_values.keys()] )
+
+            # go down the decision tree
+            return MDecisionTree.classify(attribute_values[  ">= {}".format( prevMin ) ],
+                                          instance, vec_Attributes, default_class)
+
+        else: #nominal
+            # means for some reason, the value expressed in instance was not included in tree_training
+            if instance_attribute_value not in attribute_values: # [ NEED UPDATE ? ]
+                return default_class
+
+            # go down the decision tree
+            return MDecisionTree.classify(attribute_values[instance_attribute_value], instance, vec_Attributes, default_class)
+
+    @staticmethod
+    def classification_accuracy(tree_trained, testing_instances, vec_Attributes, class_index=0 ):
+        # Go through each instance and check if correct / incorrect
+        # Return: num_correct, num_instances, accuracy
+
+        num_correct = 0
+        default = MHelper.majority_value_of_attribute(testing_instances, -1)
+
+        for idx, instance in enumerate(testing_instances):
+            prediction = MDecisionTree.classify(tree_trained, instance, vec_Attributes, default)
+            actual_value = instance[class_index]
+            if prediction == actual_value:
+                num_correct += 1
+
+        return num_correct, len(testing_instances), float(num_correct) / len(testing_instances)
+
+    # //////////////////////////[ DECISION TREE REL - CLASSIFY EVAL SET ]///////////////////////////
+    @staticmethod
+    def predict_on_instances( tree_trained, instances_to_predict, vec_Attributes, class_index, default_class=None ):
+        for idx, instance in enumerate(instances_to_predict):
+            prediction = MDecisionTree.classify(tree_trained, instance, vec_Attributes, default_class)
+            instance[ class_index ] = prediction
+
+    # //////////////////////////[ DECISION TREE REL - LEARNING CURVE ]///////////////////////////
+    @staticmethod
+    def partition_instances(instances, num_partitions):
+        # range(stop) // range(start, stop [,step])
+        return [[instances[j] for j in range(i, len(instances), num_partitions)]
+                for i in range(num_partitions)]
+
+    @staticmethod
+    def compute_learning_curve(tree_learnt, instances, vec_Attributes, num_partitions=10):
+        partitions = MDecisionTree.partition_instances(instances, num_partitions)
+        training_instances1 = []
+        training_instances2 = []
+        accuracy_list = []
+
+        for i in range(0, num_partitions):
+            # for each iteration, increase the number of partitions
+            # ex. num_partitions: 10) 0.1 => 0.2 => 0.3 => 0.4 => ... => 1.0
+            training_instances1.extend(partitions[i % num_partitions ][:])
+            training_instances2.extend(partitions[(i + 1) % num_partitions ][:])
+
+            # test tree
+            # take average of 2 partitions
+            partition_accuracy1 = MDecisionTree.classification_accuracy(
+                tree_learnt, training_instances1, vec_Attributes, -1)[2]
+            partition_accuracy2 = MDecisionTree.classification_accuracy(
+                tree_learnt, training_instances2, vec_Attributes, -1)[2]
+            partition_accuracy = (partition_accuracy1 + partition_accuracy2) / 2
+
+            accuracy_list.append( [ ( 1 / num_partitions * (i+1) ), partition_accuracy ] )
+
+        return accuracy_list
